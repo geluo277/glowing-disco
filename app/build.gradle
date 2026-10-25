@@ -10,6 +10,15 @@ android {
     sourceSets {
         main {
             assets.srcDirs = ['src/main/assets']
+            // Explicitly package the ASTC decoder placed here by GitHub Actions.
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    // Keep native libraries in the APK so Android extracts them to nativeLibraryDir.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 
