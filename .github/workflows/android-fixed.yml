@@ -117,15 +117,15 @@ jobs:
             exit 1
           fi
 
-          mkdir -p app/src/main/assets/astcenc/arm64-v8a
+          mkdir -p app/src/main/jniLibs/arm64-v8a
 
           cp "$ASTC_BIN" \
-            app/src/main/assets/astcenc/arm64-v8a/astcenc
+            app/src/main/jniLibs/arm64-v8a/libastcenc.so
 
           chmod 755 \
-            app/src/main/assets/astcenc/arm64-v8a/astcenc
+            app/src/main/jniLibs/arm64-v8a/libastcenc.so
 
-          file app/src/main/assets/astcenc/arm64-v8a/astcenc
+          file app/src/main/jniLibs/arm64-v8a/libastcenc.so
 
       # 6. 检查 Android 项目文件
       - name: Check project files
@@ -146,9 +146,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -s app/src/main/assets/astcenc/arm64-v8a/astcenc
+          test -s app/src/main/jniLibs/arm64-v8a/libastcenc.so
 
-          ls -lh app/src/main/assets/astcenc/arm64-v8a/astcenc
+          ls -lh app/src/main/jniLibs/arm64-v8a/libastcenc.so
 
       # 8. 构建 APK
       - name: Build debug APK
@@ -175,7 +175,7 @@ jobs:
           ls -lh "$APK"
 
           unzip -l "$APK" | grep \
-            'assets/astcenc/arm64-v8a/astcenc'
+            'lib/arm64-v8a/libastcenc.so'
 
       # 10. 上传 APK，供手机下载
       - name: Upload APK
