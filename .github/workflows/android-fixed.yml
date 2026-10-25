@@ -19,69 +19,75 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Locate Android SDK
+      - name: Configure Android SDK
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
 
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
 
-          if [ -z "$SDK" ]; then
-            echo "ERROR: Android SDK path is not configured."
+          if [ ! -d "$SDK" ]; then
+            echo "Android SDK not found: $SDK"
             exit 1
           fi
 
-          echo "Android SDK: $SDK"
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
 
           SDKMANAGER="$(find "$SDK/cmdline-tools" \
             -type f -name sdkmanager -print -quit 2>/dev/null || true)"
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found."
-            echo "Contents of cmdline-tools:"
-            ls -la "$SDK/cmdline-tools" || true
+            echo "sdkmanager not found under $SDK/cmdline-tools"
             exit 1
           fi
 
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
-
           "$SDKMANAGER" --version
 
-      - name: Accept Android SDK licenses
+      - name: Accept SDK licenses
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           yes | "$SDKMANAGER" --licenses || true
 
-      - name: Check Gradle wrapper
+      - name: Install Android SDK packages
         shell: bash
         run: |
-          set -eu
-          if [ ! -f ./gradlew ]; then
-            echo "ERROR: gradlew not found in repository root."
-            ls -la
+          set -euo pipefail
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "build-tools;36.0.0"
+
+      - name: Check project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f gradlew ]; then
+            echo "ERROR: gradlew not found at repository root."
+            find . -maxdepth 3 -name gradlew -print
             exit 1
           fi
-          chmod +x ./gradlew
 
-      - name: Build debug APK
+          chmod +x gradlew
+
+      - name: Build APK
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
@@ -89,5 +95,5 @@ jobs:
         with:
           name: android-debug-apk
           path: |
-            app/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/debug/*.apk
           if-no-files-found: error
