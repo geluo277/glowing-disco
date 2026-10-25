@@ -200,18 +200,22 @@ public class MainActivity extends Activity {
     }
 
     private File ensureAstcenc() throws Exception {
+        // Android may deny execve() for a binary copied into filesDir.
+        // Package the ARM64 CLI as a native library so PackageManager extracts
+        // it into nativeLibraryDir, which is the intended executable location.
         String abi = "arm64-v8a";
-        for (String supported : android.os.Build.SUPPORTED_ABIS) {
-            if (supported.equals("arm64-v8a")) { abi = supported; break; }
+        boolean supported = false;
+        for (String item : android.os.Build.SUPPORTED_ABIS) {
+            if ("arm64-v8a".equals(item)) { supported = true; break; }
         }
-        File exe = new File(getFilesDir(), "astcenc");
-        if (exe.exists() && exe.length() > 0 && exe.canExecute()) return exe;
-        try (InputStream in = getAssets().open("astcenc/" + abi + "/astcenc");
-             OutputStream out = new FileOutputStream(exe)) {
-            byte[] b = new byte[65536]; int n;
-            while ((n = in.read(b)) > 0) out.write(b, 0, n);
+        if (!supported) {
+            throw new java.io.IOException("当前设备不是 arm64-v8a，暂不支持 ASTC 解码。");
         }
-        if (!exe.setExecutable(true, true)) throw new java.io.IOException("无法设置 ASTC 解码器执行权限。");
+        File exe = new File(getApplicationInfo().nativeLibraryDir, "libastcenc.so");
+        if (!exe.isFile() || !exe.canExecute()) {
+            throw new java.io.IOException("APK 内未正确安装 ASTC 解码器：" + exe.getAbsolutePath()
+                    + "。请重新构建并安装最新 APK。");
+        }
         return exe;
     }
 
