@@ -1,4 +1,3 @@
-
 name: Build NOTX UnZip Android APK
 
 on:
@@ -30,90 +29,113 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Check project files
-        shell: bash
-        run: |
-          set -eu
-
-          echo "Current directory:"
-          pwd
-          echo "Project files:"
-          ls -la
-
-          test -f settings.gradle
-          test -f build.gradle
-          test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-
-          echo "Project structure is valid."
-
       - name: Configure Android SDK
         shell: bash
         run: |
-          set -eu
-
+          set -euo pipefail
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-
-          if [ ! -d "$SDK" ]; then
-            echo "Android SDK not found: $SDK"
-            exit 1
-          fi
-
+          test -d "$SDK" || { echo "Android SDK not found: $SDK"; exit 1; }
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
-          SDKMANAGER="$(find "$SDK/cmdline-tools" \
-            -type f -name sdkmanager -print -quit 2>/dev/null || true)"
-
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
           if [ -z "$SDKMANAGER" ]; then
             echo "sdkmanager not found under $SDK/cmdline-tools"
             exit 1
           fi
-
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
           "$SDKMANAGER" --version
 
-      - name: Install Android SDK components
+      - name: Install Android SDK and NDK
         shell: bash
         run: |
-          set -eu
-
+          set -euo pipefail
           yes | "$SDKMANAGER" --licenses || true
-
           "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
-            "build-tools;35.0.0"
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
 
-      - name: Check Python assets
+      - name: Check project files
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
+          test -f settings.gradle
+          test -f build.gradle
+          test -f app/build.gradle
+          test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/python/mobile_unpack.py
           test -f app/src/main/python/nxpk_mode3.py
           test -f app/src/main/python/ktx_to_png.py
+          test -f app/src/main/python/batch_convert.py
           test -f app/src/main/assets/pathdict.txt.gz
-          echo "Required source files found."
+
+      - name: Build ASTC decoder for Android arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
+          NDK="$SDK/ndk/27.2.12479018"
+          CMAKE="$SDK/cmake/3.22.1/bin/cmake"
+
+          test -x "$CMAKE" || { echo "CMake not found: $CMAKE"; exit 1; }
+          test -f "$NDK/build/cmake/android.toolchain.cmake" || {
+            echo "Android NDK toolchain not found: $NDK"
+            exit 1
+          }
+
+          git clone --depth 1 --branch 5.1.0 https://github.com/ARM-software/astc-encoder.git astc-encoder
+          cmake -S astc-encoder -B astc-encoder/build-android \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DANDROID_STL=c++_static \
+            -DARCH=aarch64 \
+            -DASTCENC_ISA_NEON=ON \
+            -DASTCENC_CLI=ON \
+            -DASTCENC_DECOMPRESSOR=ON \
+            -DASTCENC_SHAREDLIB=OFF \
+            -DASTCENC_UNITTEST=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PWD/astc-encoder/install"
+
+          cmake --build astc-encoder/build-android --parallel 2
+
+          mkdir -p app/src/main/assets/astcenc/arm64-v8a
+          echo "Searching for built ASTC command-line binary..."
+          find astc-encoder/build-android -type f -name 'astcenc*' -print
+
+          ASTC_BIN="$(find astc-encoder/build-android -type f -name 'astcenc*' -perm -111 -print -quit)"
+          if [ -z "$ASTC_BIN" ]; then
+            cmake --install astc-encoder/build-android || true
+            ASTC_BIN="$(find astc-encoder -type f -name 'astcenc*' -perm -111 -print -quit)"
+          fi
+          if [ -z "$ASTC_BIN" ]; then
+            echo "ERROR: ASTC CLI binary was not produced."
+            find astc-encoder/build-android -maxdepth 5 -type f -print | head -200
+            exit 1
+          fi
+
+          cp "$ASTC_BIN" app/src/main/assets/astcenc/arm64-v8a/astcenc
+          chmod 644 app/src/main/assets/astcenc/arm64-v8a/astcenc
+          file app/src/main/assets/astcenc/arm64-v8a/astcenc
+          ls -lh app/src/main/assets/astcenc/arm64-v8a/astcenc
 
       - name: Build debug APK
         shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           gradle --no-daemon :app:assembleDebug
 
-      - name: Verify APK
+      - name: Verify APK contains ASTC decoder
         shell: bash
         run: |
-          set -eu
-
+          set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "APK was not generated."
-            find . -type f -name "*.apk" -print
-            exit 1
-          fi
-
+          test -f "$APK"
+          unzip -l "$APK" | grep -F "assets/astcenc/arm64-v8a/astcenc"
           ls -lh "$APK"
 
       - name: Upload APK
